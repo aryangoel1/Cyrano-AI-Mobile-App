@@ -9,12 +9,20 @@ nonisolated struct ClaudeRequest: Encodable, Sendable {
     let system: String?
     let stream: Bool
 
-    enum CodingKeys: String, CodingKey {
-        case model
-        case maxTokens = "max_tokens"
-        case messages
-        case system
-        case stream
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(messages, forKey: .messages)
+        try container.encode(stream, forKey: .stream)
+        // Only include system if non-nil to avoid sending "system": null
+        if let system {
+            try container.encode(system, forKey: .system)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case model, maxTokens, messages, system, stream
     }
 }
 
@@ -24,6 +32,10 @@ nonisolated struct ClaudeMessageParam: Encodable, Sendable {
 }
 
 // MARK: - SSE Response Events
+
+nonisolated struct SSEEventBase: Decodable, Sendable {
+    let type: String
+}
 
 nonisolated struct SSEMessageStart: Decodable, Sendable {
     let type: String
@@ -40,11 +52,6 @@ nonisolated struct SSEMessage: Decodable, Sendable {
 nonisolated struct SSEUsage: Decodable, Sendable {
     let inputTokens: Int?
     let outputTokens: Int?
-
-    enum CodingKeys: String, CodingKey {
-        case inputTokens = "input_tokens"
-        case outputTokens = "output_tokens"
-    }
 }
 
 nonisolated struct SSEContentBlockDelta: Decodable, Sendable {
@@ -66,10 +73,6 @@ nonisolated struct SSEMessageDelta: Decodable, Sendable {
 
 nonisolated struct SSEMessageDeltaPayload: Decodable, Sendable {
     let stopReason: String?
-
-    enum CodingKeys: String, CodingKey {
-        case stopReason = "stop_reason"
-    }
 }
 
 nonisolated struct SSEErrorEvent: Decodable, Sendable {

@@ -74,7 +74,16 @@ final class ChatViewModel {
 
     func send() {
         let trimmed = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let client else { return }
+        guard !trimmed.isEmpty else {
+            print("[Cyrano] send() aborted: empty input")
+            return
+        }
+        guard let client else {
+            print("[Cyrano] send() aborted: no API client configured")
+            state = .error("No API key configured. Go to Settings to add your Anthropic API key.")
+            return
+        }
+        print("[Cyrano] send() starting with \(trimmed.count) chars, client: \(client.providerName)")
 
         if trimmed.count > maxPromptLength {
             state = .error(AppError.promptTooLong(current: trimmed.count, max: maxPromptLength).localizedDescription)
@@ -108,16 +117,19 @@ final class ChatViewModel {
 
         let maxTokens = maxOutputTokens
         let limiter = rateLimiter
+        let capturedClient = client
 
         currentTask = Task {
             let allowed = await limiter.tryAcquire()
             guard allowed else {
+                print("[Cyrano] Rate limited")
                 state = .error(AppError.rateLimited(retryAfterSeconds: nil).localizedDescription)
                 removeMessage(id: assistantMessageID)
                 return
             }
 
-            let stream = client.streamChat(
+            print("[Cyrano] Starting stream request...")
+            let stream = capturedClient.streamChat(
                 messages: messagesToSend,
                 systemPrompt: nil,
                 maxTokens: maxTokens
@@ -132,19 +144,23 @@ final class ChatViewModel {
                     case .textDelta(let text):
                         if !receivedText {
                             receivedText = true
+                            print("[Cyrano] First text delta received")
                             state = .streaming
                         }
                         appendToMessage(id: assistantMessageID, text: text)
 
                     case .usage(let input, let output):
+                        print("[Cyrano] Usage: \(input) in, \(output) out")
                         finalUsage = ClaudeUsage(inputTokens: input, outputTokens: output)
 
-                    case .done:
+                    case .done(let stopReason):
+                        print("[Cyrano] Stream done, reason: \(stopReason ?? "nil")")
                         finalizeMessage(id: assistantMessageID, usage: finalUsage)
                         state = .done
                         return
 
                     case .error(let appError):
+                        print("[Cyrano] Stream error: \(appError.localizedDescription)")
                         if case .streamCancelled = appError {
                             finalizeMessage(id: assistantMessageID, usage: finalUsage)
                             state = .done
@@ -155,6 +171,7 @@ final class ChatViewModel {
                     }
                 }
             } catch {
+                print("[Cyrano] Stream threw: \(error)")
                 finalizeMessage(id: assistantMessageID, usage: finalUsage)
                 state = .error(error.localizedDescription)
                 return

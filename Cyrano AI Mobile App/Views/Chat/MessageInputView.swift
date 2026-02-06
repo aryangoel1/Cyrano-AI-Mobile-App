@@ -8,6 +8,11 @@ struct MessageInputView: View {
             TextField("Message", text: $viewModel.inputText, axis: .vertical)
                 .lineLimit(1...6)
                 .textFieldStyle(.roundedBorder)
+                .onSubmit {
+                    if viewModel.canSend {
+                        viewModel.send()
+                    }
+                }
 
             Button {
                 if viewModel.isStreaming {

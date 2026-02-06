@@ -30,6 +30,7 @@ nonisolated final class ClaudeClient: AIClient, Sendable {
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
                     request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
+                    request.setValue("true", forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
 
                     let body = ClaudeRequest(
                         model: model,
@@ -39,6 +40,7 @@ nonisolated final class ClaudeClient: AIClient, Sendable {
                         stream: true
                     )
                     let encoder = JSONEncoder()
+                    encoder.keyEncodingStrategy = .convertToSnakeCase
                     request.httpBody = try encoder.encode(body)
 
                     let (bytes, response) = try await session.bytes(for: request)
@@ -49,7 +51,11 @@ nonisolated final class ClaudeClient: AIClient, Sendable {
                         return
                     }
 
+                    // Read error body for non-200 responses
                     guard httpResponse.statusCode == 200 else {
+                        var errorBody = ""
+                        for try await line in bytes.lines { errorBody += line }
+
                         let appError: AppError
                         switch httpResponse.statusCode {
                         case 401:
@@ -63,7 +69,7 @@ nonisolated final class ClaudeClient: AIClient, Sendable {
                         default:
                             appError = .serverError(
                                 statusCode: httpResponse.statusCode,
-                                message: "HTTP \(httpResponse.statusCode)"
+                                message: errorBody.isEmpty ? "HTTP \(httpResponse.statusCode)" : errorBody
                             )
                         }
                         continuation.yield(.error(appError))
@@ -71,15 +77,23 @@ nonisolated final class ClaudeClient: AIClient, Sendable {
                         return
                     }
 
+                    // Parse SSE stream
                     let decoder = JSONDecoder()
-                    for try await (event, data) in SSEParser.parse(bytes: bytes) {
-                        try Task.checkCancellation()
-                        guard let jsonData = data.data(using: .utf8) else { continue }
+                    decoder.keyDecodingStrategy = .convertFromSnakeCase
 
-                        switch event {
+                    for try await line in bytes.lines {
+                        try Task.checkCancellation()
+
+                        guard line.hasPrefix("data: ") else { continue }
+                        let jsonString = String(line.dropFirst(6))
+                        if jsonString.trimmingCharacters(in: .whitespaces) == "[DONE]" { break }
+                        guard let jsonData = jsonString.data(using: .utf8) else { continue }
+
+                        guard let eventBase = try? decoder.decode(SSEEventBase.self, from: jsonData) else { continue }
+
+                        switch eventBase.type {
                         case "content_block_delta":
                             if let delta = try? decoder.decode(SSEContentBlockDelta.self, from: jsonData),
-                               delta.delta.type == "text_delta",
                                let text = delta.delta.text {
                                 continuation.yield(.textDelta(text))
                             }

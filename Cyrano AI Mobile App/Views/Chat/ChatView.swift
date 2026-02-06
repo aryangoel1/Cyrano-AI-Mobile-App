@@ -53,6 +53,15 @@ struct ChatView: View {
                     }
                 }
 
+                // API key warning
+                if !settingsVM.isKeyValid {
+                    ErrorBannerView(
+                        message: "No valid API key. Tap Settings (gear icon) to add your Anthropic key.",
+                        onDismiss: { },
+                        onRetry: nil
+                    )
+                }
+
                 // Error banner
                 if case .error(let msg) = viewModel.state {
                     ErrorBannerView(
@@ -109,7 +118,13 @@ struct ChatView: View {
                     conversationListVM.selectedConversationID = selectedID
                 }
             }
-            .sheet(isPresented: $showSettings) {
+            .sheet(isPresented: $showSettings, onDismiss: {
+                viewModel.updateClient(settingsVM.makeClient())
+                viewModel.updateSettings(
+                    maxPromptLength: settingsVM.maxPromptLength,
+                    maxOutputTokens: settingsVM.maxOutputTokens
+                )
+            }) {
                 SettingsView()
             }
             .sheet(isPresented: $showShareSheet) {
